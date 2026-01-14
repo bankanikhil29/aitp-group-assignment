@@ -8,15 +8,20 @@ import plotly.express as px
 SUPABASE_URL = "https://noxsvelejtdgqmaqgtgy.supabase.co"
 SUPABASE_KEY = "sb_publishable_ixONKGsSKc9dRdbBQuVmNQ_yyGO3S90"
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Initialize Supabase
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    print(f"Supabase Init Error: {e}")
 
-# Initialize Sentiment Analysis Model (Hugging Face)
-# We use a 'distilbert' model which is fast and accurate for reviews
+# Initialize Sentiment Analysis Model (Global Scope)
+print("🧠 Loading AI Model... this may take a moment.")
 sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
 
 # --- 2. LOGIC LAYER ---
 def fetch_and_analyze():
     try:
+        # Join comments with videos table to get the title
         response = supabase.table("comments").select("*, videos(video_title)").execute()
     except Exception as e:
         print(f"⚠️ Database Fetch Error: {e}")
@@ -29,24 +34,26 @@ def fetch_and_analyze():
 
     processed_rows = []
     for row in data:
+        # 1. Get Text
         raw_text = row.get('text_content') or row.get('text') or row.get('comment_text')
-        
         comment_text = raw_text if raw_text else ""
 
         if not comment_text.strip():
             continue
 
+        # 2. Get Timestamp
         timestamp = row.get('published_at') or row.get('created_at')
 
+        # 3. Get Video Title (Handle Join)
         if row.get('videos'):
              video_label = row['videos'].get('video_title') or "Unknown Video"
         else:
              video_label = row.get('video_id', "Unknown Video")
 
+        # 4. AI Analysis
         try:
             # Truncate to 512 chars for BERT
             analysis = sentiment_pipeline(comment_text[:512])[0]
-
             sentiment_score = analysis['score'] if analysis['label'] == 'POSITIVE' else -analysis['score']
 
             processed_rows.append({
@@ -57,7 +64,7 @@ def fetch_and_analyze():
                 "Sentiment Score": sentiment_score
             })
         except Exception as e:
-            print(f"⚠️ AI Error on comment: {e}")
+            # print(f"⚠️ AI Error on comment: {e}") # Uncomment for deeper debugging
             continue
 
     return pd.DataFrame(processed_rows)
@@ -68,8 +75,6 @@ def generate_dashboard():
     if df.empty:
         empty_fig = px.line(title="Waiting for Data... (Database is Empty)")
         return empty_fig, pd.DataFrame(), pd.DataFrame()
-
-    df_daily = df.groupby([pd.Grouper(key='Date', freq='D'), 'Video'])['Sentiment Score'].mean().reset_index()
 
     try:
         # Group by Day and Video Title
@@ -104,11 +109,9 @@ with gr.Blocks(theme=gr.themes.Soft(), css=pulse_css) as app:
 
     with gr.Row():
         refresh_btn = gr.Button("🔄 Refresh Pulse Data", variant="primary")
-
     
     with gr.Tab("📊 Macro Strategy"):
         sentiment_chart = gr.Plot(label="Sentiment Over Time")
-
     
     with gr.Tab("🔍 Micro Drill-Down"):
         gr.Markdown("### 🏆 Top Brand Advocates (Most Positive)")
@@ -123,5 +126,6 @@ with gr.Blocks(theme=gr.themes.Soft(), css=pulse_css) as app:
         outputs=[sentiment_chart, pos_table, neg_table]
     )
 
-# Launch the App
-app.launch(share=True, debug=True)
+# --- 4. LAUNCH EXECUTION ---
+if __name__ == "__main__":
+    app.launch(share=True)
