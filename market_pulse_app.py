@@ -1,5 +1,3 @@
-!pip install -q gradio supabase transformers pandas plotly scipy
-
 import gradio as gr
 from supabase import create_client, Client
 from transformers import pipeline
